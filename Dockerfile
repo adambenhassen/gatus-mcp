@@ -1,11 +1,14 @@
 # Build a static binary, then ship it on distroless.
-FROM golang:1.26 AS build
+# Builds on the native build platform and cross-compiles to the target arch.
+FROM --platform=$BUILDPLATFORM golang:1.26 AS build
 
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /gatus-mcp ./cmd/gatus-mcp
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags="-s -w" -o /gatus-mcp ./cmd/gatus-mcp
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
