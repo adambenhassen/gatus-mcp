@@ -8,7 +8,7 @@ import (
 )
 
 // version is reported to MCP clients in serverInfo.
-const version = "0.1.0"
+const version = "0.1.1"
 
 // toolset binds the MCP tool handlers to a Gatus client.
 type toolset struct {
