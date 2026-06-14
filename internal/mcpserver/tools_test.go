@@ -33,7 +33,7 @@ const (
 	pendingJSON = `{"name":"New","group":"","key":"new","healthy":null,"note":"no probe results yet"}`
 )
 
-func mockGatus(t *testing.T) *toolset {
+func mockServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	serve := func(body string) http.HandlerFunc {
@@ -46,14 +46,37 @@ func mockGatus(t *testing.T) *toolset {
 	mux.HandleFunc("/api/v1/endpoints/statuses", serve(statusesJSON))
 	mux.HandleFunc("/api/v1/endpoints/infra_planka/statuses", serve(historyJSON))
 	mux.HandleFunc("/api/v1/endpoints/infra_planka/uptimes/24h", serve("0.9987"))
+	mux.HandleFunc("/api/v1/endpoints/infra_planka/uptimes/1h", serve("not-a-number"))
 	mux.HandleFunc("/api/v1/endpoints/infra_planka/response-times/24h", serve("42"))
+	mux.HandleFunc("/api/v1/endpoints/infra_planka/response-times/24h/history", serve(`[{"timestamp":"2026-06-14T12:00:00Z","average":42}]`))
 	mux.HandleFunc("/api/v1/endpoints/infra_planka/health/badge.svg", serve("<svg>up</svg>"))
+	mux.HandleFunc("/api/v1/endpoints/infra_planka/health/badge.shields", serve(`{"schemaVersion":1,"label":"health","message":"healthy","color":"green"}`))
+	mux.HandleFunc("/api/v1/endpoints/infra_planka/uptimes/24h/badge.svg", serve("<svg>uptime</svg>"))
+	mux.HandleFunc("/api/v1/endpoints/infra_planka/response-times/24h/badge.svg", serve("<svg>rt</svg>"))
+	mux.HandleFunc("/api/v1/endpoints/infra_planka/response-times/24h/chart.svg", serve("<svg>chart</svg>"))
+	mux.HandleFunc("/api/v1/suites/statuses", serve(`[{"name":"suite1","key":"suite1"}]`))
+	mux.HandleFunc("/api/v1/suites/suite1/statuses", serve(`{"name":"suite1","key":"suite1"}`))
+	mux.HandleFunc("/api/v1/endpoints/ext_ep/external", serve("result submitted"))
 	mux.HandleFunc("/api/v1/config", serve(`{"oidc":false,"authenticated":false}`))
 	mux.HandleFunc("/health", serve(`{"status":"UP"}`))
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &toolset{client: gatus.NewClient(srv.URL, "")}
+	return srv
+}
+
+func mockGatus(t *testing.T) *toolset {
+	t.Helper()
+	return &toolset{client: gatus.NewClient(mockServer(t).URL, "")}
+}
+
+// brokenGatus returns a toolset whose client points at a closed server, so every
+// request fails with a connection error.
+func brokenGatus(t *testing.T) *toolset {
+	t.Helper()
+	srv := httptest.NewServer(http.NewServeMux())
+	srv.Close()
+	return &toolset{client: gatus.NewClient(srv.URL, "tok")}
 }
 
 func assertJSON(t *testing.T, got any, wantJSON string) {
@@ -141,20 +164,103 @@ func TestRawMetrics(t *testing.T) {
 	assertJSON(t, rt, `{"key":"infra_planka","duration":"24h","value":42}`)
 }
 
+func TestRawMetricNonNumeric(t *testing.T) {
+	ts := mockGatus(t)
+	if _, _, err := ts.endpointUptime(t.Context(), nil, metricInput{Key: "infra_planka", Duration: "1h"}); err == nil {
+		t.Fatal("expected error for non-numeric body")
+	}
+}
+
 func TestBadDurationRejected(t *testing.T) {
 	ts := mockGatus(t)
 	if _, _, err := ts.endpointUptime(t.Context(), nil, metricInput{Key: "infra_planka", Duration: "5m"}); err == nil {
 		t.Fatal("expected error for invalid duration")
 	}
+	if _, _, err := ts.uptimeBadge(t.Context(), nil, metricInput{Key: "infra_planka", Duration: "5m"}); err == nil {
+		t.Fatal("expected error for invalid duration on badge")
+	}
 }
 
-func TestHealthBadgeSVG(t *testing.T) {
+func TestResponseTimeHistory(t *testing.T) {
 	ts := mockGatus(t)
-	_, out, err := ts.healthBadge(t.Context(), nil, svgInput{Key: "infra_planka"})
+	_, out, err := ts.responseTimeHistory(t.Context(), nil, metricInput{Key: "infra_planka", Duration: "24h"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertJSON(t, out, `{"key":"infra_planka","svg":"<svg>up</svg>"}`)
+	assertJSON(t, out, `[{"timestamp":"2026-06-14T12:00:00Z","average":42}]`)
+}
+
+func TestResponseTimeHistoryValidation(t *testing.T) {
+	ts := mockGatus(t)
+	if _, _, err := ts.responseTimeHistory(t.Context(), nil, metricInput{Duration: "24h"}); err == nil {
+		t.Error("expected error for missing key")
+	}
+	if _, _, err := ts.responseTimeHistory(t.Context(), nil, metricInput{Key: "infra_planka", Duration: "5m"}); err == nil {
+		t.Error("expected error for invalid duration")
+	}
+}
+
+func TestBadges(t *testing.T) {
+	ts := mockGatus(t)
+	cases := []struct {
+		name string
+		call func() (svgOutput, error)
+		want string
+	}{
+		{"health", func() (svgOutput, error) {
+			_, o, e := ts.healthBadge(t.Context(), nil, svgInput{Key: "infra_planka"})
+			return o, e
+		}, `{"key":"infra_planka","svg":"<svg>up</svg>"}`},
+		{"uptime", func() (svgOutput, error) {
+			_, o, e := ts.uptimeBadge(t.Context(), nil, metricInput{Key: "infra_planka", Duration: "24h"})
+			return o, e
+		}, `{"key":"infra_planka","duration":"24h","svg":"<svg>uptime</svg>"}`},
+		{"response_time", func() (svgOutput, error) {
+			_, o, e := ts.responseTimeBadge(t.Context(), nil, metricInput{Key: "infra_planka", Duration: "24h"})
+			return o, e
+		}, `{"key":"infra_planka","duration":"24h","svg":"<svg>rt</svg>"}`},
+		{"chart", func() (svgOutput, error) {
+			_, o, e := ts.responseTimeChart(t.Context(), nil, metricInput{Key: "infra_planka", Duration: "24h"})
+			return o, e
+		}, `{"key":"infra_planka","duration":"24h","svg":"<svg>chart</svg>"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := tc.call()
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertJSON(t, out, tc.want)
+		})
+	}
+}
+
+func TestHealthBadgeShields(t *testing.T) {
+	ts := mockGatus(t)
+	_, out, err := ts.healthBadgeShields(t.Context(), nil, svgInput{Key: "infra_planka"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSON(t, out, `{"schemaVersion":1,"label":"health","message":"healthy","color":"green"}`)
+}
+
+func TestSuites(t *testing.T) {
+	ts := mockGatus(t)
+	_, list, err := ts.suiteStatuses(t.Context(), nil, emptyInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSON(t, list, `[{"name":"suite1","key":"suite1"}]`)
+
+	_, one, err := ts.suiteStatus(t.Context(), nil, suiteInput{Key: "suite1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSON(t, one, `{"name":"suite1","key":"suite1"}`)
+
+	if _, _, err := ts.suiteStatus(t.Context(), nil, suiteInput{}); err == nil {
+		t.Fatal("expected error for missing suite key")
+	}
 }
 
 func TestPassthrough(t *testing.T) {
@@ -176,5 +282,51 @@ func TestSubmitExternalRequiresToken(t *testing.T) {
 	ts := mockGatus(t)
 	if _, _, err := ts.submitExternal(t.Context(), nil, externalInput{Key: "x", Success: true}); err == nil {
 		t.Fatal("expected error when GATUS_TOKEN is unset")
+	}
+}
+
+func TestSubmitExternalSuccess(t *testing.T) {
+	ts := &toolset{client: gatus.NewClient(mockServer(t).URL, "tok")}
+	_, out, err := ts.submitExternal(t.Context(), nil, externalInput{Key: "ext_ep", Success: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSON(t, out, `{"response":"result submitted"}`)
+
+	if _, _, err := ts.submitExternal(t.Context(), nil, externalInput{Key: ""}); err == nil {
+		t.Fatal("expected error for missing key")
+	}
+}
+
+// TestUpstreamErrorsPropagate exercises the error-return branch of every handler
+// when Gatus is unreachable.
+func TestUpstreamErrorsPropagate(t *testing.T) {
+	ts := brokenGatus(t)
+	ctx := t.Context()
+	m := metricInput{Key: "k", Duration: "24h"}
+	calls := map[string]func() error{
+		"healthSummary":        func() error { _, _, e := ts.healthSummary(ctx, nil, emptyInput{}); return e },
+		"listStatuses":         func() error { _, _, e := ts.listStatuses(ctx, nil, listInput{}); return e },
+		"endpointHistory":      func() error { _, _, e := ts.endpointHistory(ctx, nil, historyInput{Key: "k"}); return e },
+		"endpointUptime":       func() error { _, _, e := ts.endpointUptime(ctx, nil, m); return e },
+		"endpointResponseTime": func() error { _, _, e := ts.endpointResponseTime(ctx, nil, m); return e },
+		"responseTimeHistory":  func() error { _, _, e := ts.responseTimeHistory(ctx, nil, m); return e },
+		"healthBadge":          func() error { _, _, e := ts.healthBadge(ctx, nil, svgInput{Key: "k"}); return e },
+		"uptimeBadge":          func() error { _, _, e := ts.uptimeBadge(ctx, nil, m); return e },
+		"responseTimeBadge":    func() error { _, _, e := ts.responseTimeBadge(ctx, nil, m); return e },
+		"responseTimeChart":    func() error { _, _, e := ts.responseTimeChart(ctx, nil, m); return e },
+		"healthBadgeShields":   func() error { _, _, e := ts.healthBadgeShields(ctx, nil, svgInput{Key: "k"}); return e },
+		"suiteStatuses":        func() error { _, _, e := ts.suiteStatuses(ctx, nil, emptyInput{}); return e },
+		"suiteStatus":          func() error { _, _, e := ts.suiteStatus(ctx, nil, suiteInput{Key: "k"}); return e },
+		"config":               func() error { _, _, e := ts.config(ctx, nil, emptyInput{}); return e },
+		"liveness":             func() error { _, _, e := ts.liveness(ctx, nil, emptyInput{}); return e },
+		"submitExternal":       func() error { _, _, e := ts.submitExternal(ctx, nil, externalInput{Key: "k"}); return e },
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			if err := call(); err == nil {
+				t.Errorf("%s: expected error when Gatus is unreachable", name)
+			}
+		})
 	}
 }
