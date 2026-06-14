@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -17,14 +18,9 @@ import (
 // emptyInput is the input type for tools that take no arguments.
 type emptyInput struct{}
 
-// allowedDurations is the set of duration windows Gatus accepts for the
-// uptime, response-time, badge and chart endpoints.
-var allowedDurations = map[string]struct{}{
-	"1h":  {},
-	"24h": {},
-	"7d":  {},
-	"30d": {},
-}
+// allowedDurations is the single source of truth for the duration windows Gatus
+// accepts on the uptime, response-time, badge and chart endpoints.
+var allowedDurations = []string{"1h", "24h", "7d", "30d"}
 
 // trimmedEndpoint is the reduced view of a Gatus endpoint returned by the summary
 // and list tools. healthy is always serialized — null when no probe has run yet
@@ -92,8 +88,8 @@ func requireKey(key string) error {
 
 // validateDuration validates a duration window against the set Gatus accepts.
 func validateDuration(d string) error {
-	if _, ok := allowedDurations[d]; !ok {
-		return fmt.Errorf("invalid duration %q: must be one of 1h, 24h, 7d, 30d", d)
+	if !slices.Contains(allowedDurations, d) {
+		return fmt.Errorf("invalid duration %q: must be one of %s", d, strings.Join(allowedDurations, ", "))
 	}
 	return nil
 }
