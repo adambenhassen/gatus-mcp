@@ -1,5 +1,7 @@
 # gatus-mcp
 
+[![CI](https://github.com/adambenhassen/gatus-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/adambenhassen/gatus-mcp/actions/workflows/ci.yml)
+
 An [MCP](https://modelcontextprotocol.io) server that exposes a
 [Gatus](https://github.com/TwiN/gatus) status page to AI agents. It wraps Gatus's
 REST API and serves tools over streamable HTTP at `/mcp`, so an assistant can

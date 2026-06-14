@@ -1,0 +1,11 @@
+.git
+.github
+.gitignore
+.dockerignore
+Dockerfile
+*.md
+.golangci.yml
+plans/
+py/
+/gatus-mcp
+coverage.out
