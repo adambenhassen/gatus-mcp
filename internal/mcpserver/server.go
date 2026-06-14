@@ -7,16 +7,14 @@ import (
 	"github.com/adambenhassen/gatus-mcp/internal/gatus"
 )
 
-// version is reported to MCP clients in serverInfo.
-const version = "0.1.1"
-
 // toolset binds the MCP tool handlers to a Gatus client.
 type toolset struct {
 	client *gatus.Client
 }
 
-// New builds an MCP server with every Gatus tool registered.
-func New(client *gatus.Client) *mcp.Server {
+// New builds an MCP server with every Gatus tool registered. version is reported
+// to MCP clients in serverInfo.
+func New(client *gatus.Client, version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "gatus", Version: version}, nil)
 	(&toolset{client: client}).register(server)
 	return server

@@ -26,7 +26,7 @@ func TestE2ELiveGatus(t *testing.T) {
 		t.Skip("GATUS_URL not set; skipping live e2e")
 	}
 
-	server := New(gatus.NewClient(gatusURL, ""))
+	server := New(gatus.NewClient(gatusURL, ""), "e2e")
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 	httpSrv := httptest.NewServer(handler)
 	t.Cleanup(httpSrv.Close)

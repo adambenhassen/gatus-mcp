@@ -7,7 +7,7 @@ import (
 )
 
 func TestNew(t *testing.T) {
-	if New(gatus.NewClient("http://gatus:8080", "")) == nil {
+	if New(gatus.NewClient("http://gatus:8080", ""), "test") == nil {
 		t.Fatal("New returned nil server")
 	}
 }

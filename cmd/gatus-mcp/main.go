@@ -33,6 +33,10 @@ import (
 // shutdownTimeout bounds how long in-flight requests have to drain on shutdown.
 const shutdownTimeout = 10 * time.Second
 
+// version is the build version reported to MCP clients. It is set at release
+// time via -ldflags "-X main.version=<tag>"; defaults to "dev" otherwise.
+var version = "dev"
+
 // getenv returns the environment value for key, or def when it is unset/empty.
 func getenv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -55,7 +59,7 @@ func run(ctx context.Context) error {
 	port := getenv("MCP_PORT", "3000")
 	token := os.Getenv("GATUS_TOKEN")
 
-	server := mcpserver.New(gatus.NewClient(gatusURL, token))
+	server := mcpserver.New(gatus.NewClient(gatusURL, token), version)
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", handler)
