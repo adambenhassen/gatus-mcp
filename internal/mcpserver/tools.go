@@ -26,9 +26,11 @@ var allowedDurations = map[string]struct{}{
 	"30d": {},
 }
 
-// trimmedEndpoint is the reduced view of a Gatus endpoint returned by the
-// summary and list tools. Optional keys are omitted to mirror the Python
-// implementation; healthy is always present and null when no probe has run.
+// trimmedEndpoint is the reduced view of a Gatus endpoint returned by the summary
+// and list tools. healthy is always serialized — null when no probe has run yet
+// (the "pending" state), so consumers can tell pending apart from up/down. The
+// remaining optional fields are co-set with healthy by trim and omitted when there
+// is no result.
 type trimmedEndpoint struct {
 	Healthy          *bool    `json:"healthy"`
 	Status           *int     `json:"status,omitempty"`
@@ -96,7 +98,17 @@ func validateDuration(d string) error {
 	return nil
 }
 
-// --- Ported tools (exact behavior parity with the Python server) ---
+// endpointPath builds /api/v1/endpoints/{key}/<segments...> with the key escaped,
+// so a caller-supplied key cannot inject path, query, or fragment characters.
+func endpointPath(key string, segments ...string) string {
+	base := "/api/v1/endpoints/" + url.PathEscape(key)
+	if len(segments) == 0 {
+		return base
+	}
+	return base + "/" + strings.Join(segments, "/")
+}
+
+// --- Core endpoint status tools ---
 
 // summaryOutput is the result of get_health_summary.
 type summaryOutput struct {
@@ -137,8 +149,8 @@ type listInput struct {
 	Group         string `json:"group,omitempty"          jsonschema:"filter to a single group, case-insensitive (e.g. media, ai, infra)"`
 }
 
-// listOutput wraps the endpoint list, mirroring how the Python server returns a
-// JSON array as structured tool output.
+// listOutput wraps the endpoint slice in an object: MCP structured tool output
+// must be a JSON object, not a top-level array.
 type listOutput struct {
 	Result []trimmedEndpoint `json:"result"`
 }
@@ -204,7 +216,7 @@ func (t *toolset) endpointHistory(ctx context.Context, _ *mcp.CallToolRequest, i
 	q.Set("pageSize", strconv.Itoa(pageSize))
 
 	var ep gatus.Endpoint
-	if err := t.client.GetJSON(ctx, "/api/v1/endpoints/"+in.Key+"/statuses", q, &ep); err != nil {
+	if err := t.client.GetJSON(ctx, endpointPath(in.Key, "statuses"), q, &ep); err != nil {
 		return nil, historyOutput{}, err
 	}
 	results := make([]historyResult, 0, len(ep.Results))
@@ -230,7 +242,8 @@ func (t *toolset) endpointHistory(ctx context.Context, _ *mcp.CallToolRequest, i
 
 // --- New tools: full Gatus API coverage ---
 
-// metricInput is shared by the raw uptime/response-time and badge/chart tools.
+// metricInput is shared by the duration-windowed tools: raw uptime/response-time,
+// response-time history, and the badge/chart tools.
 type metricInput struct {
 	Key      string `json:"key"      jsonschema:"the Gatus endpoint key, e.g. infra_planka"`
 	Duration string `json:"duration" jsonschema:"window: one of 1h, 24h, 7d, 30d"`
@@ -250,7 +263,7 @@ func (t *toolset) rawMetric(ctx context.Context, in metricInput, kind string) (r
 	if err := validateDuration(in.Duration); err != nil {
 		return rawMetricOutput{}, err
 	}
-	raw, err := t.client.GetText(ctx, "/api/v1/endpoints/"+in.Key+"/"+kind+"/"+in.Duration)
+	raw, err := t.client.GetText(ctx, endpointPath(in.Key, kind, in.Duration))
 	if err != nil {
 		return rawMetricOutput{}, err
 	}
@@ -284,7 +297,7 @@ func (t *toolset) responseTimeHistory(ctx context.Context, _ *mcp.CallToolReques
 	if err := validateDuration(in.Duration); err != nil {
 		return nil, nil, err
 	}
-	out, err := t.passthrough(ctx, "/api/v1/endpoints/"+in.Key+"/response-times/"+in.Duration+"/history")
+	out, err := t.passthrough(ctx, endpointPath(in.Key, "response-times", in.Duration, "history"))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -320,7 +333,7 @@ func (t *toolset) svg(ctx context.Context, key, duration, path string) (svgOutpu
 }
 
 func (t *toolset) healthBadge(ctx context.Context, _ *mcp.CallToolRequest, in svgInput) (*mcp.CallToolResult, svgOutput, error) {
-	out, err := t.svg(ctx, in.Key, "", "/api/v1/endpoints/"+in.Key+"/health/badge.svg")
+	out, err := t.svg(ctx, in.Key, "", endpointPath(in.Key, "health", "badge.svg"))
 	if err != nil {
 		return nil, svgOutput{}, err
 	}
@@ -328,7 +341,7 @@ func (t *toolset) healthBadge(ctx context.Context, _ *mcp.CallToolRequest, in sv
 }
 
 func (t *toolset) uptimeBadge(ctx context.Context, _ *mcp.CallToolRequest, in metricInput) (*mcp.CallToolResult, svgOutput, error) {
-	out, err := t.svg(ctx, in.Key, in.Duration, "/api/v1/endpoints/"+in.Key+"/uptimes/"+in.Duration+"/badge.svg")
+	out, err := t.svg(ctx, in.Key, in.Duration, endpointPath(in.Key, "uptimes", in.Duration, "badge.svg"))
 	if err != nil {
 		return nil, svgOutput{}, err
 	}
@@ -336,7 +349,7 @@ func (t *toolset) uptimeBadge(ctx context.Context, _ *mcp.CallToolRequest, in me
 }
 
 func (t *toolset) responseTimeBadge(ctx context.Context, _ *mcp.CallToolRequest, in metricInput) (*mcp.CallToolResult, svgOutput, error) {
-	out, err := t.svg(ctx, in.Key, in.Duration, "/api/v1/endpoints/"+in.Key+"/response-times/"+in.Duration+"/badge.svg")
+	out, err := t.svg(ctx, in.Key, in.Duration, endpointPath(in.Key, "response-times", in.Duration, "badge.svg"))
 	if err != nil {
 		return nil, svgOutput{}, err
 	}
@@ -344,7 +357,7 @@ func (t *toolset) responseTimeBadge(ctx context.Context, _ *mcp.CallToolRequest,
 }
 
 func (t *toolset) responseTimeChart(ctx context.Context, _ *mcp.CallToolRequest, in metricInput) (*mcp.CallToolResult, svgOutput, error) {
-	out, err := t.svg(ctx, in.Key, in.Duration, "/api/v1/endpoints/"+in.Key+"/response-times/"+in.Duration+"/chart.svg")
+	out, err := t.svg(ctx, in.Key, in.Duration, endpointPath(in.Key, "response-times", in.Duration, "chart.svg"))
 	if err != nil {
 		return nil, svgOutput{}, err
 	}
@@ -355,7 +368,7 @@ func (t *toolset) healthBadgeShields(ctx context.Context, _ *mcp.CallToolRequest
 	if err := requireKey(in.Key); err != nil {
 		return nil, nil, err
 	}
-	out, err := t.passthrough(ctx, "/api/v1/endpoints/"+in.Key+"/health/badge.shields")
+	out, err := t.passthrough(ctx, endpointPath(in.Key, "health", "badge.shields"))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -379,7 +392,7 @@ func (t *toolset) suiteStatus(ctx context.Context, _ *mcp.CallToolRequest, in su
 	if err := requireKey(in.Key); err != nil {
 		return nil, nil, err
 	}
-	out, err := t.passthrough(ctx, "/api/v1/suites/"+in.Key+"/statuses")
+	out, err := t.passthrough(ctx, "/api/v1/suites/"+url.PathEscape(in.Key)+"/statuses")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -430,7 +443,8 @@ func (t *toolset) submitExternal(ctx context.Context, _ *mcp.CallToolRequest, in
 }
 
 // passthrough fetches a Gatus JSON endpoint and returns the decoded payload
-// unaltered, for endpoints whose shape is dynamic or large.
+// unaltered, for endpoints where a typed struct adds little value (dynamic, large,
+// or trivially small fixed shapes).
 func (t *toolset) passthrough(ctx context.Context, path string) (any, error) {
 	var out any
 	if err := t.client.GetJSON(ctx, path, nil, &out); err != nil {

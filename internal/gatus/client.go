@@ -139,7 +139,7 @@ func (c *Client) PostExternal(ctx context.Context, key string, success bool, err
 	if duration != "" {
 		q.Set("duration", duration)
 	}
-	data, err := c.do(ctx, http.MethodPost, "/api/v1/endpoints/"+key+"/external", q, http.NoBody)
+	data, err := c.do(ctx, http.MethodPost, "/api/v1/endpoints/"+url.PathEscape(key)+"/external", q, http.NoBody)
 	if err != nil {
 		return "", err
 	}

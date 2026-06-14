@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/adambenhassen/gatus-mcp/internal/gatus"
@@ -45,6 +46,7 @@ func mockServer(t *testing.T) *httptest.Server {
 	}
 	mux.HandleFunc("/api/v1/endpoints/statuses", serve(statusesJSON))
 	mux.HandleFunc("/api/v1/endpoints/infra_planka/statuses", serve(historyJSON))
+	mux.HandleFunc("/api/v1/endpoints/no_errors/statuses", serve(`{"name":"X","key":"no_errors","results":[{"status":200,"success":true,"duration":1000000,"timestamp":"t"}]}`))
 	mux.HandleFunc("/api/v1/endpoints/infra_planka/uptimes/24h", serve("0.9987"))
 	mux.HandleFunc("/api/v1/endpoints/infra_planka/uptimes/1h", serve("not-a-number"))
 	mux.HandleFunc("/api/v1/endpoints/infra_planka/response-times/24h", serve("42"))
@@ -295,6 +297,72 @@ func TestSubmitExternalSuccess(t *testing.T) {
 
 	if _, _, err := ts.submitExternal(t.Context(), nil, externalInput{Key: ""}); err == nil {
 		t.Fatal("expected error for missing key")
+	}
+}
+
+func TestEndpointPathEscapesKey(t *testing.T) {
+	got := endpointPath("a/b?c#d", "statuses")
+	want := "/api/v1/endpoints/a%2Fb%3Fc%23d/statuses"
+	if got != want {
+		t.Errorf("endpointPath = %q, want %q", got, want)
+	}
+	if endpointPath("k") != "/api/v1/endpoints/k" {
+		t.Errorf("endpointPath with no segments = %q", endpointPath("k"))
+	}
+}
+
+func TestRoundMs(t *testing.T) {
+	cases := []struct {
+		ns   int64
+		want float64
+	}{
+		{12340000, 12.3}, // rounds down
+		{12360000, 12.4}, // rounds up (a truncating impl would give 12.3)
+		{44000, 0},       // 0.044ms -> 0.0
+		{60000, 0.1},     // 0.06ms  -> 0.1 (truncation would give 0.0)
+		{250000000, 250}, // whole number
+		{0, 0},           // no duration
+	}
+	for _, tc := range cases {
+		if got := roundMs(tc.ns); got != tc.want {
+			t.Errorf("roundMs(%d) = %v, want %v", tc.ns, got, tc.want)
+		}
+	}
+}
+
+func TestValidateDuration(t *testing.T) {
+	for _, d := range []string{"1h", "24h", "7d", "30d"} {
+		if err := validateDuration(d); err != nil {
+			t.Errorf("validateDuration(%q) = %v, want nil", d, err)
+		}
+	}
+	for _, d := range []string{"5m", "", "1H", "24", "1d"} {
+		if validateDuration(d) == nil {
+			t.Errorf("validateDuration(%q) = nil, want error", d)
+		}
+	}
+}
+
+func TestEndpointHistoryNormalizesNilErrors(t *testing.T) {
+	ts := mockGatus(t)
+	_, out, err := ts.endpointHistory(t.Context(), nil, historyInput{Key: "no_errors"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A result with no "errors" key must serialize as [] (not null), and the
+	// requested key must be echoed back when Gatus omits it.
+	assertJSON(t, out, `{"name":"X","group":"","key":"no_errors","results":[`+
+		`{"status":200,"success":true,"responseTimeMs":1,"timestamp":"t","errors":[]}]}`)
+}
+
+func TestUpstreamErrorMessageIsWrapped(t *testing.T) {
+	ts := brokenGatus(t)
+	_, _, err := ts.healthSummary(t.Context(), nil, emptyInput{})
+	if err == nil {
+		t.Fatal("expected an error when Gatus is unreachable")
+	}
+	if !strings.Contains(err.Error(), "gatus request failed") {
+		t.Errorf("error not wrapped with context: %v", err)
 	}
 }
 
