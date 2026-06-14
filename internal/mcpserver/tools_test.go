@@ -311,6 +311,38 @@ func TestEndpointPathEscapesKey(t *testing.T) {
 	}
 }
 
+// TestHandlersEscapeKeyInPath pins the actual fix: handlers and the write path
+// must send a percent-encoded key to Gatus, so a regression to raw string
+// concatenation (the original injection bug) is caught — the unit test above
+// only covers the helper in isolation.
+func TestHandlersEscapeKeyInPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		if _, err := io.WriteString(w, `{"name":"x","key":"x","results":[]}`); err != nil {
+			t.Errorf("write: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	ts := &toolset{client: gatus.NewClient(srv.URL, "tok")}
+
+	// Read path: a key containing a slash must reach Gatus percent-encoded.
+	if _, _, err := ts.endpointHistory(t.Context(), nil, historyInput{Key: "a/b"}); err != nil {
+		t.Fatal(err)
+	}
+	if want := "/api/v1/endpoints/a%2Fb/statuses"; gotPath != want {
+		t.Errorf("read path = %q, want %q", gotPath, want)
+	}
+
+	// Write path: PostExternal must escape the key too.
+	if _, _, err := ts.submitExternal(t.Context(), nil, externalInput{Key: "a/b", Success: true}); err != nil {
+		t.Fatal(err)
+	}
+	if want := "/api/v1/endpoints/a%2Fb/external"; gotPath != want {
+		t.Errorf("write path = %q, want %q", gotPath, want)
+	}
+}
+
 func TestRoundMs(t *testing.T) {
 	cases := []struct {
 		ns   int64
@@ -320,6 +352,7 @@ func TestRoundMs(t *testing.T) {
 		{12360000, 12.4}, // rounds up (a truncating impl would give 12.3)
 		{44000, 0},       // 0.044ms -> 0.0
 		{60000, 0.1},     // 0.06ms  -> 0.1 (truncation would give 0.0)
+		{50000, 0.1},     // 0.05ms  -> 0.1 (pins round-half-away-from-zero)
 		{250000000, 250}, // whole number
 		{0, 0},           // no duration
 	}

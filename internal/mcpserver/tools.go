@@ -96,6 +96,8 @@ func validateDuration(d string) error {
 
 // endpointPath builds /api/v1/endpoints/{key}/<segments...> with the key escaped,
 // so a caller-supplied key cannot inject path, query, or fragment characters.
+// Segments are joined unescaped and must be trusted (string literals or
+// already-validated values such as a duration).
 func endpointPath(key string, segments ...string) string {
 	base := "/api/v1/endpoints/" + url.PathEscape(key)
 	if len(segments) == 0 {
