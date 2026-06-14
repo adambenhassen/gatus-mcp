@@ -3,6 +3,7 @@
 .gitignore
 .dockerignore
 Dockerfile
+docker-compose*.yml
 *.md
 .golangci.yml
 plans/

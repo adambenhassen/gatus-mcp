@@ -51,6 +51,12 @@ docker build -t gatus-mcp .
 docker run --rm -p 3000:3000 -e GATUS_URL=http://your-gatus:8080 gatus-mcp
 ```
 
+### Docker Compose
+
+To run Gatus and gatus-mcp together, copy
+[`docker-compose.example.yml`](docker-compose.example.yml) to
+`docker-compose.yml`, supply your own `gatus.yaml`, and run `docker compose up`.
+
 ### From source
 
 ```sh
