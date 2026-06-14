@@ -14,10 +14,14 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -25,6 +29,9 @@ import (
 	"github.com/adambenhassen/gatus-mcp/internal/gatus"
 	"github.com/adambenhassen/gatus-mcp/internal/mcpserver"
 )
+
+// shutdownTimeout bounds how long in-flight requests have to drain on shutdown.
+const shutdownTimeout = 10 * time.Second
 
 // getenv returns the environment value for key, or def when it is unset/empty.
 func getenv(key, def string) string {
@@ -35,6 +42,14 @@ func getenv(key, def string) string {
 }
 
 func main() {
+	if err := run(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run starts the MCP HTTP server and blocks until ctx is cancelled or an interrupt
+// signal arrives, then shuts down gracefully. It returns the first fatal error.
+func run(ctx context.Context) error {
 	gatusURL := getenv("GATUS_URL", "http://gatus:8080")
 	host := getenv("MCP_HOST", "0.0.0.0")
 	port := getenv("MCP_PORT", "3000")
@@ -52,8 +67,26 @@ func main() {
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	log.Printf("gatus-mcp listening on %s/mcp (gatus: %s)", addr, gatusURL)
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
+
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	serveErr := make(chan error, 1)
+	go func() {
+		log.Printf("gatus-mcp listening on %s/mcp (gatus: %s)", addr, gatusURL)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- err
+			return
+		}
+		serveErr <- nil
+	}()
+
+	select {
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		return srv.Shutdown(shutdownCtx)
 	}
 }
