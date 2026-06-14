@@ -31,3 +31,30 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start Gatus
+        run: |
+          docker run -d --name gatus -p 8080:8080 \
+            -v "$GITHUB_WORKSPACE/.github/gatus.e2e.yaml:/config/config.yaml" \
+            twinproduction/gatus:latest
+      - name: Wait for Gatus probes
+        run: |
+          for i in $(seq 1 30); do
+            if [ "$(curl -fsS http://localhost:8080/api/v1/endpoints/statuses | grep -o '"success"' | wc -l)" -ge 2 ]; then
+              echo "gatus ready"; exit 0
+            fi
+            sleep 2
+          done
+          echo "gatus did not produce probe results in time"; docker logs gatus; exit 1
+      - name: Run e2e tests
+        env:
+          GATUS_URL: http://localhost:8080
+        run: go test -tags=e2e -run TestE2ELiveGatus -v ./internal/mcpserver/

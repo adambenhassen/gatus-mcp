@@ -1,0 +1,15 @@
+# Minimal Gatus config used by the CI e2e job: one endpoint that should be up and
+# one that is always down, so the tools see both healthy and unhealthy results.
+endpoints:
+  - name: github
+    group: external
+    url: "https://github.com"
+    interval: 1s
+    conditions:
+      - "[STATUS] == 200"
+  - name: always-down
+    group: infra
+    url: "https://localhost:1"
+    interval: 1s
+    conditions:
+      - "[STATUS] == 200"
