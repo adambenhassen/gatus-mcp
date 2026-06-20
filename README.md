@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.svg" alt="gatus-mcp" width="880">
+</p>
+
 # gatus-mcp
 
 [![CI](https://github.com/adambenhassen/gatus-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/adambenhassen/gatus-mcp/actions/workflows/ci.yml)

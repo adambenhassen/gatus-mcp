@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="200" viewBox="0 0 880 200" role="img" aria-label="gatus-mcp — Gatus status pages for AI agents">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#161b22"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3fb950"/>
+      <stop offset="1" stop-color="#58a6ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="880" height="200" rx="16" fill="url(#bg)"/>
+  <rect x="0" y="0" width="6" height="200" rx="3" fill="url(#accent)"/>
+
+  <!-- status dots -->
+  <g>
+    <circle cx="56" cy="64" r="7" fill="#3fb950"/>
+    <circle cx="56" cy="100" r="7" fill="#3fb950"/>
+    <circle cx="56" cy="136" r="7" fill="#d29922"/>
+  </g>
+
+  <g font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+    <text x="92" y="92" font-size="56" font-weight="700" fill="#e6edf3">gatus<tspan fill="#58a6ff">-mcp</tspan></text>
+    <text x="94" y="128" font-size="22" font-weight="400" fill="#8b949e">Gatus status pages, exposed to AI agents over MCP</text>
+  </g>
+
+  <!-- mini uptime sparkline -->
+  <g transform="translate(94,150)">
+    <rect x="0"   y="6"  width="14" height="22" rx="2" fill="#3fb950"/>
+    <rect x="20"  y="2"  width="14" height="26" rx="2" fill="#3fb950"/>
+    <rect x="40"  y="10" width="14" height="18" rx="2" fill="#3fb950"/>
+    <rect x="60"  y="0"  width="14" height="28" rx="2" fill="#3fb950"/>
+    <rect x="80"  y="8"  width="14" height="20" rx="2" fill="#d29922"/>
+    <rect x="100" y="4"  width="14" height="24" rx="2" fill="#3fb950"/>
+    <rect x="120" y="12" width="14" height="16" rx="2" fill="#3fb950"/>
+    <rect x="140" y="2"  width="14" height="26" rx="2" fill="#3fb950"/>
+  </g>
+</svg>
